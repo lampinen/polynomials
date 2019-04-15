@@ -1265,13 +1265,13 @@ class meta_model(object):
                         language_learning_rate *= language_lr_decay
 
 
-            if config["sweep_meta_batch_sizes"] is not None:
-                with open(sweep_filename, "a") as fout_sweep:
-                    sweep_names, sweep_losses = self.run_base_eval(
-                        include_new=include_new, sweep_meta_batch_sizes=config["sweep_meta_batch_sizes"])
-                    for i, swept_batch_size in enumerate(config["sweep_meta_batch_sizes"]):
-                        swept_losses = s_epoch + ("%i, " % swept_batch_size) + (base_loss_format % tuple(sweep_losses[i]))
-                        fout_sweep.write(swept_losses)
+#            if config["sweep_meta_batch_sizes"] is not None:
+#                with open(sweep_filename, "a") as fout_sweep:
+#                    sweep_names, sweep_losses = self.run_base_eval(
+#                        include_new=include_new, sweep_meta_batch_sizes=config["sweep_meta_batch_sizes"])
+#                    for i, swept_batch_size in enumerate(config["sweep_meta_batch_sizes"]):
+#                        swept_losses = s_epoch + ("%i, " % swept_batch_size) + (base_loss_format % tuple(sweep_losses[i]))
+#                        fout_sweep.write(swept_losses)
 
 
 ## running stuff

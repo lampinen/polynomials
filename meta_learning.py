@@ -67,7 +67,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/language_only/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/conditioned_language_baseline/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [10, 20, 30, 50, 100, 200, 400, 800], # if not None,
                                                                     # eval each at
@@ -610,69 +610,73 @@ class meta_model(object):
         self.meta_bf_task_params = _hyper_network(self.guess_meta_bf_function_emb)
         self.fed_emb_task_params = _hyper_network(self.feed_embedding_ph)
 
+        # conditioned_language
         # task network
-        def _task_network(task_params, processed_input):
-            hweights, hbiases = task_params
-            task_hidden = processed_input
-            for i in range(num_task_hidden_layers):
-                task_hidden = internal_nonlinearity(
-                    tf.matmul(task_hidden, hweights[i]) + hbiases[i])
+        def _task_network(language_embedding, processed_input):
+            language_embedding = tf.tile(language_embedding, [tf.shape(processed_input)[0], 1])
+            task_hidden = tf.concat([language_embedding,
+                                      processed_input], axis=-1)
 
-            raw_output = tf.matmul(task_hidden, hweights[-1]) + hbiases[-1]
+            for i in range(num_task_hidden_layers):
+                task_hidden = slim.fully_connected(task_hidden, num_hidden_hyper,
+                                                   activation_fn=internal_nonlinearity) 
+
+            raw_output = slim.fully_connected(task_hidden, num_hidden_hyper,
+                                              activation_fn=None) 
 
             return raw_output
 
-        self.base_raw_output = _task_network(self.base_task_params,
-                                             processed_input)
-        self.base_output = _output_mapping(self.base_raw_output)
-
-        self.base_lang_raw_output = _task_network(self.base_lang_task_params,
-                                             processed_input)
+#        self.base_raw_output = _task_network(self.base_task_params,
+#                                             processed_input)
+#        self.base_output = _output_mapping(self.base_raw_output)
+#
+        self.base_lang_raw_output = _task_network(self.language_function_emb,
+                                                  processed_input)
         self.base_lang_output = _output_mapping(self.base_lang_raw_output)
-
-        self.base_raw_output_fed_emb = _task_network(self.fed_emb_task_params,
-                                                     processed_input)
-        self.base_output_fed_emb = _output_mapping(self.base_raw_output_fed_emb)
-
-        self.meta_t_raw_output = _task_network(self.meta_t_task_params,
-                                               self.meta_input_ph)
-        self.meta_t_output = tf.nn.sigmoid(self.meta_t_raw_output)
-
-        self.meta_m_output = _task_network(self.meta_m_task_params,
-                                           self.meta_input_ph)
-
-        self.meta_bf_output = _task_network(self.meta_bf_task_params,
-                                            self.combined_meta_inputs)
-
-        self.base_loss = tf.square(self.base_output - self.base_target_ph)
-        self.total_base_loss = tf.reduce_mean(self.base_loss)
+#
+#        self.base_raw_output_fed_emb = _task_network(self.fed_emb_task_params,
+#                                                     processed_input)
+#        self.base_output_fed_emb = _output_mapping(self.base_raw_output_fed_emb)
+#
+#        self.meta_t_raw_output = _task_network(self.meta_t_task_params,
+#                                               self.meta_input_ph)
+#        self.meta_t_output = tf.nn.sigmoid(self.meta_t_raw_output)
+#
+#        self.meta_m_output = _task_network(self.meta_m_task_params,
+#                                           self.meta_input_ph)
+#
+#        self.meta_bf_output = _task_network(self.meta_bf_task_params,
+#                                            self.combined_meta_inputs)
+#
+#        self.base_loss = tf.square(self.base_output - self.base_target_ph)
+#        self.total_base_loss = tf.reduce_mean(self.base_loss)
 
         self.base_lang_loss = tf.square(self.base_lang_output - self.base_target_ph)
         self.total_base_lang_loss = tf.reduce_mean(self.base_lang_loss)
 
-        self.base_fed_emb_loss = tf.square(
-            self.base_output_fed_emb - self.base_target_ph)
-        self.total_base_fed_emb_loss = tf.reduce_mean(self.base_fed_emb_loss)
-
-        self.meta_t_loss = tf.reduce_sum(
-            tf.square(self.meta_t_output - processed_class), axis=1)
-        self.total_meta_t_loss = tf.reduce_mean(self.meta_t_loss)
-
-        self.meta_m_loss = tf.reduce_sum(
-            tf.square(self.meta_m_output - self.meta_target_ph), axis=1)
-        self.total_meta_m_loss = tf.reduce_mean(self.meta_m_loss)
-
-        self.meta_bf_loss = tf.reduce_sum(
-            tf.square(self.meta_bf_output - self.meta_target_ph), axis=1)
-        self.total_meta_bf_loss = tf.reduce_mean(self.meta_bf_loss)
+#        self.base_fed_emb_loss = tf.square(
+#            self.base_output_fed_emb - self.base_target_ph)
+#        self.total_base_fed_emb_loss = tf.reduce_mean(self.base_fed_emb_loss)
+#
+#        self.meta_t_loss = tf.reduce_sum(
+#            tf.square(self.meta_t_output - processed_class), axis=1)
+#        self.total_meta_t_loss = tf.reduce_mean(self.meta_t_loss)
+#
+#        self.meta_m_loss = tf.reduce_sum(
+#            tf.square(self.meta_m_output - self.meta_target_ph), axis=1)
+#        self.total_meta_m_loss = tf.reduce_mean(self.meta_m_loss)
+#
+#        self.meta_bf_loss = tf.reduce_sum(
+#            tf.square(self.meta_bf_output - self.meta_target_ph), axis=1)
+#        self.total_meta_bf_loss = tf.reduce_mean(self.meta_bf_loss)
 
         optimizer = tf.train.RMSPropOptimizer(self.lr_ph)
 
-        self.base_train = optimizer.minimize(self.total_base_loss)
+#        self.base_train = optimizer.minimize(self.total_base_loss)
         self.base_lang_train = optimizer.minimize(self.total_base_lang_loss)
-        self.meta_t_train = optimizer.minimize(self.total_meta_t_loss)
-        self.meta_m_train = optimizer.minimize(self.total_meta_m_loss)
-        self.meta_bf_train = optimizer.minimize(self.total_meta_bf_loss)
+#        self.meta_t_train = optimizer.minimize(self.total_meta_t_loss)
+#        self.meta_m_train = optimizer.minimize(self.total_meta_m_loss)
+#        self.meta_bf_train = optimizer.minimize(self.total_meta_bf_loss)
 
         # Saver
         self.saver = tf.train.Saver()
@@ -685,7 +689,7 @@ class meta_model(object):
         self.fill_buffers(num_data_points=config["memory_buffer_size"],
                           include_new=True)
 
-        self.refresh_meta_dataset_cache()
+#        self.refresh_meta_dataset_cache()
 
 
     def fill_buffers(self, num_data_points=1, include_new=False):
@@ -1124,19 +1128,19 @@ class meta_model(object):
         train_meta = config["train_meta"]
 
         with open(loss_filename, "w") as fout, open(meta_filename, "w") as fout_meta, open(lang_filename, "w") as fout_lang:
-            base_names, base_losses = self.run_base_eval(
-                include_new=include_new)
-            meta_names, meta_losses = self.run_meta_loss_eval(
-                include_new=include_new)
-            meta_true_names, meta_true_losses = self.run_meta_true_eval(
-                include_new=include_new)
-
-            fout.write("epoch, " + ", ".join(base_names + meta_names) + "\n")
-            fout_meta.write("epoch, " + ", ".join(meta_true_names) + "\n")
-
-            base_loss_format = ", ".join(["%f" for _ in base_names]) + "\n"
-            loss_format = ", ".join(["%f" for _ in base_names + meta_names]) + "\n"
-            meta_true_format = ", ".join(["%f" for _ in meta_true_names]) + "\n"
+#            base_names, base_losses = self.run_base_eval(
+#                include_new=include_new)
+#            meta_names, meta_losses = self.run_meta_loss_eval(
+#                include_new=include_new)
+#            meta_true_names, meta_true_losses = self.run_meta_true_eval(
+#                include_new=include_new)
+#
+#            fout.write("epoch, " + ", ".join(base_names + meta_names) + "\n")
+#            fout_meta.write("epoch, " + ", ".join(meta_true_names) + "\n")
+#
+#            base_loss_format = ", ".join(["%f" for _ in base_names]) + "\n"
+#            loss_format = ", ".join(["%f" for _ in base_names + meta_names]) + "\n"
+#            meta_true_format = ", ".join(["%f" for _ in meta_true_names]) + "\n"
 
             if train_language:
                 (base_lang_names, 
@@ -1146,26 +1150,26 @@ class meta_model(object):
                 fout_lang.write("epoch, " + ", ".join(base_lang_names) + "\n")
 
             s_epoch  = "0, "
-            curr_losses = s_epoch + (loss_format % tuple(
-                base_losses + meta_losses))
-            curr_meta_true = s_epoch + (meta_true_format % tuple(
-                meta_true_losses))
-            fout.write(curr_losses)
-            fout_meta.write(curr_meta_true)
+#            curr_losses = s_epoch + (loss_format % tuple(
+#                base_losses + meta_losses))
+#            curr_meta_true = s_epoch + (meta_true_format % tuple(
+#                meta_true_losses))
+#            fout.write(curr_losses)
+#            fout_meta.write(curr_meta_true)
 
             if train_language:
                 curr_lang_losses = s_epoch + (lang_loss_format % tuple(
                     base_lang_losses))
                 fout_lang.write(curr_lang_losses)
 
-            if config["sweep_meta_batch_sizes"] is not None:
-                with open(sweep_filename, "w") as fout_sweep:
-                    sweep_names, sweep_losses = self.run_base_eval(
-                        include_new=include_new, sweep_meta_batch_sizes=config["sweep_meta_batch_sizes"])
-                    fout_sweep.write("epoch, size, " + ", ".join(base_names) + "\n")
-                    for i, swept_batch_size in enumerate(config["sweep_meta_batch_sizes"]):
-                        swept_losses = s_epoch + ("%i, " % swept_batch_size) + (base_loss_format % tuple(sweep_losses[i]))
-                        fout_sweep.write(swept_losses)
+#            if config["sweep_meta_batch_sizes"] is not None:
+#                with open(sweep_filename, "w") as fout_sweep:
+#                    sweep_names, sweep_losses = self.run_base_eval(
+#                        include_new=include_new, sweep_meta_batch_sizes=config["sweep_meta_batch_sizes"])
+#                    fout_sweep.write("epoch, size, " + ", ".join(base_names) + "\n")
+#                    for i, swept_batch_size in enumerate(config["sweep_meta_batch_sizes"]):
+#                        swept_losses = s_epoch + ("%i, " % swept_batch_size) + (base_loss_format % tuple(sweep_losses[i]))
+#                        fout_sweep.write(swept_losses)
 
             if include_new:
                 tasks = self.all_tasks
@@ -1191,26 +1195,27 @@ class meta_model(object):
 
             self.fill_buffers(num_data_points=config["memory_buffer_size"],
                               include_new=True)
-            self.refresh_meta_dataset_cache(include_new=include_new)
+#            self.refresh_meta_dataset_cache(include_new=include_new)
             for epoch in range(1, num_epochs+1):
                 if epoch % config["refresh_mem_buffs_every"] == 0:
                     self.fill_buffers(num_data_points=config["memory_buffer_size"],
                                       include_new=True)
-                if epoch % config["refresh_meta_cache_every"] == 0:
-                    self.refresh_meta_dataset_cache(include_new=include_new)
+#                if epoch % config["refresh_meta_cache_every"] == 0:
+#                    self.refresh_meta_dataset_cache(include_new=include_new)
 
                 order = np.random.permutation(len(tasks))
                 for task_i in order:
                     task = tasks[task_i]
                     if isinstance(task, str):
-                        if train_meta:
-                            dataset = self.meta_dataset_cache[task]
-                            self.meta_train_step(dataset, meta_learning_rate)
+                        pass
+#                        if train_meta:
+#                            dataset = self.meta_dataset_cache[task]
+#                            self.meta_train_step(dataset, meta_learning_rate)
                     else:
                         str_task = _stringify_polynomial(task)
                         memory_buffer = self.memory_buffers[str_task]
-                        if train_base:
-                            self.base_train_step(memory_buffer, learning_rate)
+#                        if train_base:
+#                            self.base_train_step(memory_buffer, learning_rate)
                         if train_language:
                             intified_task = self.task_to_ints[str_task]
                             if intified_task is not None:
@@ -1221,32 +1226,32 @@ class meta_model(object):
 
                 if epoch % save_every == 0:
                     s_epoch  = "%i, " % epoch
-                    _, base_losses = self.run_base_eval(
-                        include_new=include_new)
-                    _, meta_losses = self.run_meta_loss_eval(
-                        include_new=include_new)
-                    _, meta_true_losses = self.run_meta_true_eval(
-                        include_new=include_new)
-                    curr_losses = s_epoch + (loss_format % tuple(
-                        base_losses + meta_losses))
-                    curr_meta_true = s_epoch + (meta_true_format % tuple(meta_true_losses))
-                    fout.write(curr_losses)
-                    fout_meta.write(curr_meta_true)
+#                    _, base_losses = self.run_base_eval(
+#                        include_new=include_new)
+#                    _, meta_losses = self.run_meta_loss_eval(
+#                        include_new=include_new)
+#                    _, meta_true_losses = self.run_meta_true_eval(
+#                        include_new=include_new)
+#                    curr_losses = s_epoch + (loss_format % tuple(
+#                        base_losses + meta_losses))
+#                    curr_meta_true = s_epoch + (meta_true_format % tuple(meta_true_losses))
+#                    fout.write(curr_losses)
+#                    fout_meta.write(curr_meta_true)
                     if train_language:
                         (_, base_lang_losses) = self.run_base_language_eval(
                             include_new=include_new)
                         curr_lang_losses = s_epoch + (lang_loss_format % tuple(
                             base_lang_losses))
                         fout_lang.write(curr_lang_losses)
-                        print(curr_losses, curr_lang_losses)
-                        if np.all(curr_losses < early_stopping_thresh) and np.all(curr_lang_losses < early_stopping_thresh):
+                        print(curr_lang_losses)
+                        if np.all(curr_lang_losses < early_stopping_thresh):
                             print("Early stop!")
                             break
-                    else:
-                        print(curr_losses)
-                        if np.all(curr_losses < early_stopping_thresh):
-                            print("Early stop!")
-                            break
+#                    else:
+#                        print(curr_losses)
+#                        if np.all(curr_losses < early_stopping_thresh):
+#                            print("Early stop!")
+#                            break
 
 
                 if epoch % lr_decays_every == 0 and epoch > 0:

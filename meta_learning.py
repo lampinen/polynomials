@@ -54,8 +54,8 @@ config = {
     "refresh_meta_cache_every": 5, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
-    "max_base_epochs": 1000,
-    "max_new_epochs": 200,
+    "max_base_epochs": 3000,
+    "max_new_epochs": 100,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
     "train_drop_prob": 0.00, # dropout probability, applied on meta and hyper
@@ -67,7 +67,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/conditioned_language_baseline_shorter/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/conditioned_language_baseline/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [10, 20, 30, 50, 100, 200, 400, 800], # if not None,
                                                                     # eval each at

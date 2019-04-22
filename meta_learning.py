@@ -30,6 +30,7 @@ config = {
     "num_hidden": 64,
     "num_hidden_hyper": 512,
     "num_hidden_language": 512,
+    "network_conditioned": False, # conditioned rather than hyper architecture
 
     "num_lstm_layers": 2, # for language processing
     "max_sentence_len": 20, # Any longer than this will not be trained
@@ -54,8 +55,8 @@ config = {
     "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
-    "max_base_epochs": 0,#3000,
-    "max_new_epochs": 0,#100,
+    "max_base_epochs": 3000,
+    "max_new_epochs": 100,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
     "train_drop_prob": 0.00, # dropout probability, applied on meta and hyper
@@ -67,7 +68,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/new_results/untrained_baseline/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/continual_learning/hyper/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [10, 20, 30, 50, 100, 200, 400, 800], # if not None,
                                                                     # eval each at
@@ -76,7 +77,7 @@ config = {
     "memory_buffer_size": 1024, # How many points for each polynomial are stored
     "meta_batch_size": 128, # how many meta-learner sees
     "early_stopping_thresh": 0.05,
-    "num_base_tasks": 200, # prior to meta-augmentation
+    "num_base_tasks": 100, # prior to meta-augmentation
     "num_new_tasks": 30,
     "poly_coeff_sd": 2.5,
     "point_val_range": 1,
@@ -89,10 +90,10 @@ config = {
     "new_meta_tasks": [],
     "new_meta_mappings": ["permute_3210", "add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
     
-    "train_language": True, # whether to train language as well (only language
+    "train_language": False, # whether to train language as well (only language
                             # inputs, for now)
     "train_base": True, 
-    "train_meta": True,
+    "train_meta": False,
     "lang_drop_prob": 0.0, # dropout on language processing features
                             # to try to address overfitting
 
@@ -103,9 +104,9 @@ config = {
 poly_fam = polynomial_family(config["num_variables"], config["max_degree"])
 config["variables"] = poly_fam.variables
 
-config["base_meta_tasks"] = ["is_constant_polynomial"] + ["is_intercept_nonzero"] + ["is_%s_relevant" % var for var in config["variables"]]
-config["base_meta_mappings"] = ["square"] + ["add_%f" % c for c in config["meta_add_vals"]] + ["mult_%f" % c for c in config["meta_mult_vals"]] + ["permute_" + "".join([str(x) for x in p]) for p in permutations(range(config["num_variables"]))]
-config["base_meta_binary_funcs"] = ["binary_sum", "binary_mult"] 
+config["base_meta_tasks"] = []#["is_constant_polynomial"] + ["is_intercept_nonzero"] + ["is_%s_relevant" % var for var in config["variables"]]
+config["base_meta_mappings"] = []#["square"] + ["add_%f" % c for c in config["meta_add_vals"]] + ["mult_%f" % c for c in config["meta_mult_vals"]] + ["permute_" + "".join([str(x) for x in p]) for p in permutations(range(config["num_variables"]))]
+config["base_meta_binary_funcs"] = []#["binary_sum", "binary_mult"] 
 
 
 # filtering out held-out meta tasks
@@ -603,38 +604,76 @@ class meta_model(object):
         self.fed_emb_task_params = _hyper_network(self.feed_embedding_ph)
 
         # task network
-        def _task_network(task_params, processed_input):
-            hweights, hbiases = task_params
-            task_hidden = processed_input
-            for i in range(num_task_hidden_layers):
-                task_hidden = internal_nonlinearity(
-                    tf.matmul(task_hidden, hweights[i]) + hbiases[i])
+        if config["network_conditioned"]:
+            def _conditioned_task_network(task_embedding, processed_input):
+                task_embedding = tf.tile(task_embedding, [tf.shape(processed_input)[0], 1])
+                task_hidden = tf.concat([task_embedding,
+                                          processed_input], axis=-1)
 
-            raw_output = tf.matmul(task_hidden, hweights[-1]) + hbiases[-1]
+                for i in range(num_task_hidden_layers):
+                    task_hidden = slim.fully_connected(task_hidden, num_hidden_hyper,
+                                                       activation_fn=internal_nonlinearity) 
 
-            return raw_output
+                raw_output = slim.fully_connected(task_hidden, num_hidden_hyper,
+                                                  activation_fn=None) 
+                return raw_output
 
-        self.base_raw_output = _task_network(self.base_task_params,
-                                             processed_input)
-        self.base_output = _output_mapping(self.base_raw_output)
+            self.base_raw_output = _conditioned_task_network(self.guess_base_function_emb,
+                                                             processed_input)
+            self.base_output = _output_mapping(self.base_raw_output)
 
-        self.base_lang_raw_output = _task_network(self.base_lang_task_params,
-                                             processed_input)
-        self.base_lang_output = _output_mapping(self.base_lang_raw_output)
+            self.base_lang_raw_output = _conditioned_task_network(self.language_function_emb,
+                                                                  processed_input)
+            self.base_lang_output = _output_mapping(self.base_lang_raw_output)
 
-        self.base_raw_output_fed_emb = _task_network(self.fed_emb_task_params,
-                                                     processed_input)
-        self.base_output_fed_emb = _output_mapping(self.base_raw_output_fed_emb)
+            self.base_raw_output_fed_emb = _conditioned_task_network(self.feed_embedding_ph,
+                                                                     processed_input)
+            self.base_output_fed_emb = _output_mapping(self.base_raw_output_fed_emb)
 
-        self.meta_t_raw_output = _task_network(self.meta_t_task_params,
+            self.meta_t_raw_output = _conditioned_task_network(self.guess_meta_t_function_emb,
+                                                               self.meta_input_ph)
+
+            self.meta_t_output = tf.nn.sigmoid(self.meta_t_raw_output)
+
+            self.meta_m_output = _conditioned_task_network(self.guess_meta_m_function_emb,
+                                                           self.meta_input_ph)
+
+            self.meta_bf_output = _conditioned_task_network(self.guess_meta_bf_function_emb,
+                                                            self.combined_meta_inputs)
+
+        else:
+            def _task_network(task_params, processed_input):
+                hweights, hbiases = task_params
+                task_hidden = processed_input
+                for i in range(num_task_hidden_layers):
+                    task_hidden = internal_nonlinearity(
+                        tf.matmul(task_hidden, hweights[i]) + hbiases[i])
+
+                raw_output = tf.matmul(task_hidden, hweights[-1]) + hbiases[-1]
+
+                return raw_output
+
+            self.base_raw_output = _task_network(self.base_task_params,
+                                                 processed_input)
+            self.base_output = _output_mapping(self.base_raw_output)
+
+            self.base_lang_raw_output = _task_network(self.base_lang_task_params,
+                                                 processed_input)
+            self.base_lang_output = _output_mapping(self.base_lang_raw_output)
+
+            self.base_raw_output_fed_emb = _task_network(self.fed_emb_task_params,
+                                                         processed_input)
+            self.base_output_fed_emb = _output_mapping(self.base_raw_output_fed_emb)
+
+            self.meta_t_raw_output = _task_network(self.meta_t_task_params,
+                                                   self.meta_input_ph)
+            self.meta_t_output = tf.nn.sigmoid(self.meta_t_raw_output)
+
+            self.meta_m_output = _task_network(self.meta_m_task_params,
                                                self.meta_input_ph)
-        self.meta_t_output = tf.nn.sigmoid(self.meta_t_raw_output)
 
-        self.meta_m_output = _task_network(self.meta_m_task_params,
-                                           self.meta_input_ph)
-
-        self.meta_bf_output = _task_network(self.meta_bf_task_params,
-                                            self.combined_meta_inputs)
+            self.meta_bf_output = _task_network(self.meta_bf_task_params,
+                                                self.combined_meta_inputs)
 
         self.base_loss = tf.square(self.base_output - self.base_target_ph)
         self.total_base_loss = tf.reduce_mean(self.base_loss)
@@ -1162,7 +1201,7 @@ class meta_model(object):
                         fout_sweep.write(swept_losses)
 
             if include_new:
-                tasks = self.all_tasks
+                tasks = self.all_new_tasks # only train on new, and watch interference
                 learning_rate = config["new_init_learning_rate"]
                 language_learning_rate = config["new_init_language_learning_rate"]
                 meta_learning_rate = config["new_init_meta_learning_rate"]

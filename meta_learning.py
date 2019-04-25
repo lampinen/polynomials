@@ -55,8 +55,8 @@ config = {
     "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
-    "max_base_epochs": 3000,
-    "max_new_epochs": 100,
+    "max_base_epochs": 1,#3000,
+    "max_new_epochs": 1,#100,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
     "train_drop_prob": 0.00, # dropout probability, applied on meta and hyper
@@ -68,7 +68,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/continual_learning/hyper/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/continual_learning/hyper_emb_only/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [10, 20, 30, 50, 100, 200, 400, 800], # if not None,
                                                                     # eval each at
@@ -311,6 +311,9 @@ class meta_model(object):
         self.new_tasks = new_tasks
         self.new_task_names = [_stringify_polynomial(t) for t in new_tasks]
         self.intified_new_tasks =  [_intify_polynomial(t) for t in new_tasks]
+        num_new_base_tasks = len(self.new_tasks)
+        self.new_base_task_indices = dict(zip(self.new_task_names, 
+                                              range(num_new_base_tasks)))
 
         self.all_base_tasks = self.base_tasks + self.new_tasks
 
@@ -495,6 +498,20 @@ class meta_model(object):
 #        print(self.guess_base_function_emb)
 #        print(self.guess_meta_bf_function_emb)
 
+
+        # cached new task embeddings for continual learning
+        self.new_task_index_ph = tf.placeholder(tf.int32, [1,])
+        with tf.variable_scope("new_task_embeddings", reuse=False):
+            self.new_task_embeddings = tf.get_variable(
+                "embeddings", shape=[num_new_base_tasks, num_hidden_hyper])
+            self.new_task_embedding_assign_ph = tf.placeholder(
+                tf.float32, shape=self.new_task_embeddings.get_shape())
+            self.new_task_assign_op = tf.assign(self.new_task_embeddings,
+                                                self.new_task_embedding_assign_ph)
+
+        self.embedded_new_task = tf.nn.embedding_lookup(self.new_task_embeddings,
+                                                        self.new_task_index_ph)
+
         # language processing: lang -> emb
         num_hidden_language = config["num_hidden_language"]
         num_lstm_layers = config["num_lstm_layers"]
@@ -602,6 +619,7 @@ class meta_model(object):
         self.meta_m_task_params = _hyper_network(self.guess_meta_m_function_emb)
         self.meta_bf_task_params = _hyper_network(self.guess_meta_bf_function_emb)
         self.fed_emb_task_params = _hyper_network(self.feed_embedding_ph)
+        self.cached_new_task_params = _hyper_network(self.embedded_new_task)
 
         # task network
         if config["network_conditioned"]:
@@ -629,6 +647,10 @@ class meta_model(object):
             self.base_raw_output_fed_emb = _conditioned_task_network(self.feed_embedding_ph,
                                                                      processed_input)
             self.base_output_fed_emb = _output_mapping(self.base_raw_output_fed_emb)
+
+            self.base_raw_output_cchd_emb = _conditioned_task_network(self.embedded_new_task,
+                                                                      processed_input)
+            self.base_output_cchd_emb = _output_mapping(self.base_raw_output_cchd_emb)
 
             self.meta_t_raw_output = _conditioned_task_network(self.guess_meta_t_function_emb,
                                                                self.meta_input_ph)
@@ -665,6 +687,10 @@ class meta_model(object):
                                                          processed_input)
             self.base_output_fed_emb = _output_mapping(self.base_raw_output_fed_emb)
 
+            self.base_raw_output_cchd_emb = _task_network(self.cached_new_task_params,
+                                                          processed_input)
+            self.base_output_cchd_emb = _output_mapping(self.base_raw_output_cchd_emb)
+
             self.meta_t_raw_output = _task_network(self.meta_t_task_params,
                                                    self.meta_input_ph)
             self.meta_t_output = tf.nn.sigmoid(self.meta_t_raw_output)
@@ -685,6 +711,10 @@ class meta_model(object):
             self.base_output_fed_emb - self.base_target_ph)
         self.total_base_fed_emb_loss = tf.reduce_mean(self.base_fed_emb_loss)
 
+        self.base_cchd_emb_loss = tf.square(
+            self.base_output_cchd_emb - self.base_target_ph)
+        self.total_base_cchd_emb_loss = tf.reduce_mean(self.base_cchd_emb_loss)
+
         self.meta_t_loss = tf.reduce_sum(
             tf.square(self.meta_t_output - processed_class), axis=1)
         self.total_meta_t_loss = tf.reduce_mean(self.meta_t_loss)
@@ -701,6 +731,8 @@ class meta_model(object):
 
         self.base_train = optimizer.minimize(self.total_base_loss)
         self.base_lang_train = optimizer.minimize(self.total_base_lang_loss)
+        self.base_cchd_train = optimizer.minimize(
+            self.total_base_cchd_emb_loss, var_list=[self.new_task_embeddings])
         self.meta_t_train = optimizer.minimize(self.total_meta_t_loss)
         self.meta_m_train = optimizer.minimize(self.total_meta_m_loss)
         self.meta_bf_train = optimizer.minimize(self.total_meta_bf_loss)
@@ -757,6 +789,17 @@ class meta_model(object):
         self.sess.run(self.base_train, feed_dict=feed_dict)
 
 
+    def base_cached_train_step(self, memory_buffer, new_task_index, lr):
+        input_buff, output_buff = memory_buffer.get_memories()
+        feed_dict = {
+            self.new_task_index_ph: new_task_index,
+            self.base_target_ph: output_buff,
+            self.keep_prob_ph: self.tkp,
+            self.lr_ph: lr
+        }
+        self.sess.run(self.base_cchd_train, feed_dict=feed_dict)
+
+
     def base_language_train_step(self, intified_task, memory_buffer, lr):
         input_buff, output_buff = memory_buffer.get_memories()
         feed_dict = {
@@ -770,12 +813,10 @@ class meta_model(object):
         self.sess.run(self.base_lang_train, feed_dict=feed_dict)
 
 
-    def base_eval(self, memory_buffer, meta_batch_size=None):
+    def base_eval(self, memory_buffer, new_task_index, meta_batch_size=None):
         input_buff, output_buff = memory_buffer.get_memories()
         feed_dict = {
-            self.base_input_ph: input_buff,
-            self.guess_input_mask_ph: self._random_guess_mask(
-                self.memory_buffer_size, meta_batch_size=meta_batch_size),
+            self.new_task_index_ph: new_task_index,
             self.base_target_ph: output_buff,
             self.keep_prob_ph: 1.
         }
@@ -784,7 +825,21 @@ class meta_model(object):
         return res
 
 
-    def run_base_eval(self, include_new=False, sweep_meta_batch_sizes=False):
+    def base_cached_eval(self, memory_buffer, meta_batch_size=None):
+        input_buff, output_buff = memory_buffer.get_memories()
+        feed_dict = {
+            self.base_input_ph: input_buff,
+            self.guess_input_mask_ph: self._random_guess_mask(
+                self.memory_buffer_size, meta_batch_size=meta_batch_size),
+            self.base_target_ph: output_buff,
+            self.keep_prob_ph: 1.
+        }
+        fetches = [self.total_base_cchd_emb_loss]
+        res = self.sess.run(fetches, feed_dict=feed_dict)
+        return res
+
+
+    def run_base_eval(self, include_new=False, sweep_meta_batch_sizes=False, cached=False):
         """sweep_meta_batch_sizes: False or a list of meta batch sizes to try"""
         if include_new:
             tasks = self.all_base_tasks
@@ -806,7 +861,11 @@ class meta_model(object):
             for task in tasks:
                 task_str = _stringify_polynomial(task)
                 memory_buffer = self.memory_buffers[task_str]
-                res = self.base_eval(memory_buffer)
+                if cached and task_str in self.new_base_task_indices.keys():
+                    new_task_index = new_base_task_indices[task_str]
+                    res = self.base_cached_eval(memory_buffer, ne_task_index)
+                else:
+                    res = self.base_eval(memory_buffer)
                 losses.append(res[0])
 
         names = [_stringify_polynomial(t) for t in tasks]
@@ -1205,6 +1264,17 @@ class meta_model(object):
                 learning_rate = config["new_init_learning_rate"]
                 language_learning_rate = config["new_init_language_learning_rate"]
                 meta_learning_rate = config["new_init_meta_learning_rate"]
+
+                # switch to cached embeddings 
+                new_guess_embeddings = []
+                for task in self.new_tasks:
+                    str_task = _stringify_polynomial(task)
+                    memory_buffer = self.memory_buffers[str_task]
+                    this_emb = self.get_base_embedding(memory_buffer)[0, :]
+                    new_guess_embeddings.append(this_emb)
+                self.sess.run(self.new_task_assign_op, feed_dict={
+                    self.new_task_assign_ph: np.array(new_guess_embeddings)})
+
             else:
                 tasks = self.all_initial_tasks
                 learning_rate = config["init_learning_rate"]
@@ -1220,7 +1290,6 @@ class meta_model(object):
             min_learning_rate = config["min_learning_rate"]
             min_meta_learning_rate = config["min_meta_learning_rate"]
             min_language_learning_rate = config["min_language_learning_rate"]
-
 
             self.fill_buffers(num_data_points=config["memory_buffer_size"],
                               include_new=True)
@@ -1243,7 +1312,13 @@ class meta_model(object):
                         str_task = _stringify_polynomial(task)
                         memory_buffer = self.memory_buffers[str_task]
                         if train_base:
-                            self.base_train_step(memory_buffer, learning_rate)
+                            if include_new:
+                                if str_task not in self.new_base_task_indices.keys():
+                                    continue
+                                new_task_index = new_base_task_indices[str_task]
+                                self.base_cached_train_step(new_task_index, learning_rate)
+                            else:
+                                self.base_train_step(memory_buffer, learning_rate)
                         if train_language:
                             intified_task = self.task_to_ints[str_task]
                             if intified_task is not None:
@@ -1255,7 +1330,7 @@ class meta_model(object):
                 if epoch % save_every == 0:
                     s_epoch  = "%i, " % epoch
                     _, base_losses = self.run_base_eval(
-                        include_new=include_new)
+                        include_new=include_new, cached=include_new)
                     _, meta_losses = self.run_meta_loss_eval(
                         include_new=include_new)
                     _, meta_true_losses = self.run_meta_true_eval(

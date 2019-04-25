@@ -739,6 +739,7 @@ class meta_model(object):
 
         # Saver
         self.saver = tf.train.Saver()
+        self.restorer_without_cache = tf.train.Saver(var_list=[v for v in tf.trainable_variables() if "new_task_embeddings" not in v.name])
 
         # initialize
         sess_config = tf.ConfigProto()
@@ -792,7 +793,8 @@ class meta_model(object):
     def base_cached_train_step(self, memory_buffer, new_task_index, lr):
         input_buff, output_buff = memory_buffer.get_memories()
         feed_dict = {
-            self.new_task_index_ph: new_task_index,
+            self.base_input_ph: input_buff,
+            self.new_task_index_ph: [new_task_index],
             self.base_target_ph: output_buff,
             self.keep_prob_ph: self.tkp,
             self.lr_ph: lr
@@ -813,19 +815,20 @@ class meta_model(object):
         self.sess.run(self.base_lang_train, feed_dict=feed_dict)
 
 
-    def base_eval(self, memory_buffer, new_task_index, meta_batch_size=None):
+    def base_cached_eval(self, memory_buffer, new_task_index, meta_batch_size=None):
         input_buff, output_buff = memory_buffer.get_memories()
         feed_dict = {
-            self.new_task_index_ph: new_task_index,
+            self.base_input_ph: input_buff,
+            self.new_task_index_ph: [new_task_index],
             self.base_target_ph: output_buff,
             self.keep_prob_ph: 1.
         }
-        fetches = [self.total_base_loss]
+        fetches = [self.total_base_cchd_emb_loss]
         res = self.sess.run(fetches, feed_dict=feed_dict)
         return res
 
 
-    def base_cached_eval(self, memory_buffer, meta_batch_size=None):
+    def base_eval(self, memory_buffer, meta_batch_size=None):
         input_buff, output_buff = memory_buffer.get_memories()
         feed_dict = {
             self.base_input_ph: input_buff,
@@ -834,7 +837,7 @@ class meta_model(object):
             self.base_target_ph: output_buff,
             self.keep_prob_ph: 1.
         }
-        fetches = [self.total_base_cchd_emb_loss]
+        fetches = [self.total_base_loss]
         res = self.sess.run(fetches, feed_dict=feed_dict)
         return res
 
@@ -861,8 +864,8 @@ class meta_model(object):
             for task in tasks:
                 task_str = _stringify_polynomial(task)
                 memory_buffer = self.memory_buffers[task_str]
-                if cached and task_str in self.new_base_task_indices.keys():
-                    new_task_index = new_base_task_indices[task_str]
+                if cached and include_new and task_str in self.new_base_task_indices.keys():
+                    new_task_index = self.new_base_task_indices[task_str]
                     res = self.base_cached_eval(memory_buffer, ne_task_index)
                 else:
                     res = self.base_eval(memory_buffer)
@@ -1203,6 +1206,10 @@ class meta_model(object):
         self.saver.save(self.sess, filename)
 
 
+    def restore_parameters_without_cache(self, filename):
+        self.restorer_without_cache.restore(self.sess, filename)
+
+
     def run_training(self, filename_prefix, num_epochs, include_new=False):
         """Train model on base and meta tasks, if include_new include also
         the new ones."""
@@ -1273,7 +1280,7 @@ class meta_model(object):
                     this_emb = self.get_base_embedding(memory_buffer)[0, :]
                     new_guess_embeddings.append(this_emb)
                 self.sess.run(self.new_task_assign_op, feed_dict={
-                    self.new_task_assign_ph: np.array(new_guess_embeddings)})
+                    self.new_task_embedding_assign_ph: np.array(new_guess_embeddings)})
 
             else:
                 tasks = self.all_initial_tasks
@@ -1315,8 +1322,8 @@ class meta_model(object):
                             if include_new:
                                 if str_task not in self.new_base_task_indices.keys():
                                     continue
-                                new_task_index = new_base_task_indices[str_task]
-                                self.base_cached_train_step(new_task_index, learning_rate)
+                                new_task_index = self.new_base_task_indices[str_task]
+                                self.base_cached_train_step(memory_buffer, new_task_index, learning_rate)
                             else:
                                 self.base_train_step(memory_buffer, learning_rate)
                         if train_language:

@@ -55,8 +55,8 @@ config = {
     "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
-    "max_base_epochs": 1,#3000,
-    "max_new_epochs": 1,#100,
+    "max_base_epochs": 3000,
+    "max_new_epochs": 100,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
     "train_drop_prob": 0.00, # dropout probability, applied on meta and hyper
@@ -866,7 +866,7 @@ class meta_model(object):
                 memory_buffer = self.memory_buffers[task_str]
                 if cached and include_new and task_str in self.new_base_task_indices.keys():
                     new_task_index = self.new_base_task_indices[task_str]
-                    res = self.base_cached_eval(memory_buffer, ne_task_index)
+                    res = self.base_cached_eval(memory_buffer, new_task_index)
                 else:
                     res = self.base_eval(memory_buffer)
                 losses.append(res[0])
@@ -1406,11 +1406,12 @@ for run_i in range(config["run_offset"], config["run_offset"]+config["num_runs"]
     model = meta_model(config)
 #    model.save_embeddings(filename=filename_prefix + "_init_embeddings.csv",
 #                          include_new=False)
-    model.run_training(filename_prefix=filename_prefix,
-                       num_epochs=config["max_base_epochs"],
-                       include_new=False)
+#    model.run_training(filename_prefix=filename_prefix,
+#                       num_epochs=config["max_base_epochs"],
+#                       include_new=False)
 #    cProfile.run('model.run_training(filename_prefix=filename_prefix, num_epochs=config["max_base_epochs"], include_new=False)')
 
+    model.restore_parameters_without_cache("/mnt/fs2/lampinen/polynomials/continual_learning/hyper/" + "run%i" % run_i + "_guess_checkpoint")
     model.save_parameters(filename_prefix + "_guess_checkpoint")
 #    model.save_embeddings(filename=filename_prefix + "_guess_embeddings.csv",
 #                          include_new=True)

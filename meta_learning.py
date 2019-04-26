@@ -32,6 +32,7 @@ config = {
     "num_hidden_language": 512,
     "network_conditioned": False, # conditioned rather than hyper architecture
 
+    "cache_train_adam": False, # train cached vecs with ADAM instead of RMSProp
     "num_lstm_layers": 2, # for language processing
     "max_sentence_len": 20, # Any longer than this will not be trained
 
@@ -39,7 +40,7 @@ config = {
     "init_language_learning_rate": 1e-4,
     "init_meta_learning_rate": 1e-4,
 
-    "new_init_learning_rate": 1e-5,
+    "new_init_learning_rate": 1e-3,
     "new_init_language_learning_rate": 1e-5,
     "new_init_meta_learning_rate": 1e-5,
 
@@ -55,8 +56,8 @@ config = {
     "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
-    "max_base_epochs": 3000,
-    "max_new_epochs": 100,
+    "max_base_epochs": 0,#3000,
+    "max_new_epochs": 1000,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
     "train_drop_prob": 0.00, # dropout probability, applied on meta and hyper
@@ -68,7 +69,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/continual_learning/hyper_emb_only/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/continual_learning/hyper_emb_only_even_faster_untrained_baseline/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [10, 20, 30, 50, 100, 200, 400, 800], # if not None,
                                                                     # eval each at
@@ -728,11 +729,16 @@ class meta_model(object):
         self.total_meta_bf_loss = tf.reduce_mean(self.meta_bf_loss)
 
         optimizer = tf.train.RMSPropOptimizer(self.lr_ph)
+        adam_optimizer = tf.train.AdamOptimizer(self.lr_ph)
 
         self.base_train = optimizer.minimize(self.total_base_loss)
         self.base_lang_train = optimizer.minimize(self.total_base_lang_loss)
-        self.base_cchd_train = optimizer.minimize(
-            self.total_base_cchd_emb_loss, var_list=[self.new_task_embeddings])
+        if config["cache_train_adam"]:
+            self.base_cchd_train = adam_optimizer.minimize(
+                self.total_base_cchd_emb_loss, var_list=[self.new_task_embeddings])
+        else:
+            self.base_cchd_train = optimizer.minimize(
+                self.total_base_cchd_emb_loss, var_list=[self.new_task_embeddings])
         self.meta_t_train = optimizer.minimize(self.total_meta_t_loss)
         self.meta_m_train = optimizer.minimize(self.total_meta_m_loss)
         self.meta_bf_train = optimizer.minimize(self.total_meta_bf_loss)
@@ -1305,7 +1311,7 @@ class meta_model(object):
                 if epoch % config["refresh_mem_buffs_every"] == 0:
                     self.fill_buffers(num_data_points=config["memory_buffer_size"],
                                       include_new=True)
-                if epoch % config["refresh_meta_cache_every"] == 0:
+                if train_meta and epoch % config["refresh_meta_cache_every"] == 0:
                     self.refresh_meta_dataset_cache(include_new=include_new)
 
                 order = np.random.permutation(len(tasks))
@@ -1406,12 +1412,12 @@ for run_i in range(config["run_offset"], config["run_offset"]+config["num_runs"]
     model = meta_model(config)
 #    model.save_embeddings(filename=filename_prefix + "_init_embeddings.csv",
 #                          include_new=False)
-#    model.run_training(filename_prefix=filename_prefix,
-#                       num_epochs=config["max_base_epochs"],
-#                       include_new=False)
+    model.run_training(filename_prefix=filename_prefix,
+                       num_epochs=config["max_base_epochs"],
+                       include_new=False)
 #    cProfile.run('model.run_training(filename_prefix=filename_prefix, num_epochs=config["max_base_epochs"], include_new=False)')
 
-    model.restore_parameters_without_cache("/mnt/fs2/lampinen/polynomials/continual_learning/hyper/" + "run%i" % run_i + "_guess_checkpoint")
+#    model.restore_parameters_without_cache("/mnt/fs2/lampinen/polynomials/continual_learning/hyper/" + "run%i" % run_i + "_guess_checkpoint")
     model.save_parameters(filename_prefix + "_guess_checkpoint")
 #    model.save_embeddings(filename=filename_prefix + "_guess_embeddings.csv",
 #                          include_new=True)

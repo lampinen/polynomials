@@ -33,6 +33,7 @@ config = {
     "network_conditioned": False, # conditioned rather than hyper architecture
 
     "cache_train_adam": False, # train cached vecs with ADAM instead of RMSProp
+    "cache_random_init": True, # randomly initialized cache vectors rather than guessing
     "num_lstm_layers": 2, # for language processing
     "max_sentence_len": 20, # Any longer than this will not be trained
 
@@ -56,7 +57,7 @@ config = {
     "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
-    "max_base_epochs": 0,#3000,
+    "max_base_epochs": 3000,
     "max_new_epochs": 1000,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
@@ -69,7 +70,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/continual_learning/hyper_emb_only_even_faster_untrained_baseline/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/continual_learning/hyper_emb_only_even_faster_randomly_initialized_baseline/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [10, 20, 30, 50, 100, 200, 400, 800], # if not None,
                                                                     # eval each at
@@ -1278,15 +1279,16 @@ class meta_model(object):
                 language_learning_rate = config["new_init_language_learning_rate"]
                 meta_learning_rate = config["new_init_meta_learning_rate"]
 
-                # switch to cached embeddings 
-                new_guess_embeddings = []
-                for task in self.new_tasks:
-                    str_task = _stringify_polynomial(task)
-                    memory_buffer = self.memory_buffers[str_task]
-                    this_emb = self.get_base_embedding(memory_buffer)[0, :]
-                    new_guess_embeddings.append(this_emb)
-                self.sess.run(self.new_task_assign_op, feed_dict={
-                    self.new_task_embedding_assign_ph: np.array(new_guess_embeddings)})
+                if not self.config["cache_random_init"]: 
+                    # switch to cached embeddings 
+                    new_guess_embeddings = []
+                    for task in self.new_tasks:
+                        str_task = _stringify_polynomial(task)
+                        memory_buffer = self.memory_buffers[str_task]
+                        this_emb = self.get_base_embedding(memory_buffer)[0, :]
+                        new_guess_embeddings.append(this_emb)
+                    self.sess.run(self.new_task_assign_op, feed_dict={
+                        self.new_task_embedding_assign_ph: np.array(new_guess_embeddings)})
 
             else:
                 tasks = self.all_initial_tasks
@@ -1417,7 +1419,7 @@ for run_i in range(config["run_offset"], config["run_offset"]+config["num_runs"]
                        include_new=False)
 #    cProfile.run('model.run_training(filename_prefix=filename_prefix, num_epochs=config["max_base_epochs"], include_new=False)')
 
-#    model.restore_parameters_without_cache("/mnt/fs2/lampinen/polynomials/continual_learning/hyper/" + "run%i" % run_i + "_guess_checkpoint")
+    model.restore_parameters_without_cache("/mnt/fs2/lampinen/polynomials/continual_learning/hyper/" + "run%i" % run_i + "_guess_checkpoint")
     model.save_parameters(filename_prefix + "_guess_checkpoint")
 #    model.save_embeddings(filename=filename_prefix + "_guess_embeddings.csv",
 #                          include_new=True)

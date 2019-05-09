@@ -55,8 +55,8 @@ config = {
     "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
-    "max_base_epochs": 1,#4000,
-    "max_new_epochs": 1,#100,
+    "max_base_epochs": 4000,
+    "max_new_epochs": 100,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
     "train_drop_prob": 0.00, # dropout probability, applied on meta and hyper
@@ -1464,7 +1464,7 @@ class meta_model(object):
             if train_language:
                 curr_lang_losses = s_epoch + (lang_meta_format % tuple(
                     lang_meta_losses))
-                fout_lang.write(curr_lang_meta)
+                fout_lang.write(curr_lang_losses)
                 curr_lang_meta_true = s_epoch + (lang_meta_true_format % tuple(
                     lang_meta_true_losses))
                 fout_lang_meta.write(curr_lang_meta_true)
@@ -1548,7 +1548,7 @@ class meta_model(object):
                              include_new=include_new)
                         curr_lang_losses = s_epoch + (lang_meta_format % tuple(
                             lang_meta_losses))
-                        fout_lang.write(curr_lang_meta)
+                        fout_lang.write(curr_lang_losses)
                         curr_lang_meta_true = s_epoch + (lang_meta_true_format % tuple(
                             lang_meta_true_losses))
                         fout_lang_meta.write(curr_lang_meta_true)

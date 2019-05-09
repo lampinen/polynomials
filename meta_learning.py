@@ -55,8 +55,8 @@ config = {
     "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
-    "max_base_epochs": 8000,
-    "max_new_epochs": 100,
+    "max_base_epochs": 1,#4000,
+    "max_new_epochs": 1,#100,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
     "train_drop_prob": 0.00, # dropout probability, applied on meta and hyper
@@ -68,7 +68,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/newest_results/nometa/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/newest_results/language_meta_only/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [5, 10, 20, 30, 40, 80], # if not None,
                                                    # eval each at
@@ -90,10 +90,10 @@ config = {
     "new_meta_tasks": [],
     "new_meta_mappings": ["add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
     
-    "train_language": False, # whether to train language as well (only language
+    "train_language": True, # whether to train language as well (only language
                             # inputs, for now)
     "train_base": True, 
-    "train_meta": False,
+    "train_meta": True,
     "separate_meta_task_network": False, # baseline architecture where meta-task
                                         # weights aren't shared with basic
     "lang_drop_prob": 0.0, # dropout on language processing features
@@ -123,8 +123,8 @@ config["base_meta_tasks"] = [x for x in config["base_meta_tasks"] if x not in co
 config["meta_mappings"] = [x for x in config["base_meta_mappings"] if x not in config["new_meta_mappings"]]
 
 
-# language
-vocab = ['PAD'] + [str(x) for x in range(10)] + [".", "+", "-", "^"] + poly_fam.variables
+# language$
+vocab = ['PAD'] + [str(x) for x in range(10)] + [".", "+", "-", "^"] + poly_fam.variables + ["square", "add", "mult", "permute"] + ["is", "constant_polynomial", "intercept_nonzero", "relevant"]
 vocab_to_int = dict(zip(vocab, range(len(vocab))))
 
 config["vocab"] = vocab
@@ -134,6 +134,28 @@ config["vocab"] = vocab
 def _stringify_polynomial(p):
     """Helper for printing, etc."""
     return p.to_symbols(strip_spaces=True)
+
+
+def _intify_meta_task(mt):
+    """Helper for printing, etc."""
+    if mt == "square":
+        return [vocab_to_int[mt]]
+    elif mt[:3] == "add":
+        val = str(int(round(float(mt[4:]))))
+        return [vocab_to_int["add"]] + [vocab_to_int[x] for x in val]
+    elif mt[:4] == "mult":
+        val = str(int(round(float(mt[5:]))))
+        return [vocab_to_int["mult"]] + [vocab_to_int[x] for x in val]
+    elif mt[:7] == "permute":
+        val = mt[8:]
+        return [vocab_to_int["permute"]] + [vocab_to_int[x] for x in val]
+    elif mt[:3] == "is_":
+        if mt[3] == "X":
+            return [vocab_to_int[x] for x in mt.split('_')] 
+        else:
+            return [vocab_to_int["is"], vocab_to_int[mt[3:]]]
+    else:
+        raise ValueError("Unrecognized meta task: %s" % mt)
 
 
 number_regex = re.compile('-?[0-9]+\.[0-9][0-9]')
@@ -363,15 +385,21 @@ class meta_model(object):
 #        self.all_initial_tasks = self.all_initial_tasks + self.base_tasks_implied
         self.num_tasks = num_tasks = len(self.all_tasks)
 
-        self.intified_base_tasks =  [_intify_polynomial(t) for t in self.initial_base_tasks_with_implied]
-        self.intified_new_tasks =  [_intify_polynomial(t) for t in self.all_base_tasks_with_implied]
-        max_sentence_len_obs = max(max([len(x) for x in self.intified_new_tasks]), max([len(x) for x in self.intified_base_tasks]))
-        self.max_sentence_len = min(config["max_sentence_len"], max_sentence_len_obs)
+        self.intified_all_meta_tasks =  [_intify_meta_task(t) for t in self.all_meta_tasks]
+#        self.intified_base_tasks =  [_intify_polynomial(t) for t in self.initial_base_tasks_with_implied]
+#        self.intified_new_tasks =  [_intify_polynomial(t) for t in self.all_base_tasks_with_implied]
+#        max_sentence_len_obs = max(max([len(x) for x in self.intified_new_tasks]), max([len(x) for x in self.intified_base_tasks]))
+        max_sentence_len_obs = max([len(x) for x in self.intified_all_meta_tasks])
+        self.max_sentence_len = max_sentence_len_obs 
 #        print(self.max_sentence_len)
-        self.intified_base_tasks = [_pad(x, self.max_sentence_len, 0) if len(x) <= self.max_sentence_len else None for x in self.intified_base_tasks]
-        self.intified_new_tasks = [_pad(x, self.max_sentence_len, 0) if len(x) <= self.max_sentence_len else None for x in self.intified_new_tasks]
+#        self.intified_base_tasks = [_pad(x, self.max_sentence_len, 0) if len(x) <= self.max_sentence_len else None for x in self.intified_base_tasks]
+#        self.intified_new_tasks = [_pad(x, self.max_sentence_len, 0) if len(x) <= self.max_sentence_len else None for x in self.intified_new_tasks]
+        self.intified_all_meta_tasks = [np.array([_pad(x, self.max_sentence_len, 0)], dtype=np.int32) for x in self.intified_all_meta_tasks]
+#
+#        self.task_to_ints = {str_t: np.array([int_t]) if int_t is not None else None for str_t, int_t in zip(self.base_task_names + self.base_tasks_implied_names + self.new_task_names + self.full_tasks_implied_names, self.intified_base_tasks + self.intified_new_tasks)}
+        self.meta_task_to_ints = dict(zip(self.all_meta_tasks, self.intified_all_meta_tasks))
 
-        self.task_to_ints = {str_t: np.array([int_t]) if int_t is not None else None for str_t, int_t in zip(self.base_task_names + self.base_tasks_implied_names + self.new_task_names + self.full_tasks_implied_names, self.intified_base_tasks + self.intified_new_tasks)}
+#        print(self.meta_task_to_ints)
 
 #        for key, value in self.meta_pairings_base.items():
 #            print(key)
@@ -640,6 +668,13 @@ class meta_model(object):
                                                      subscope="/meta_tasks")
             self.meta_bf_task_params = _hyper_network(self.guess_meta_bf_function_emb, 
                                                       subscope="/meta_tasks")
+            self.meta_t_lang_task_params = _hyper_network(self.language_function_emb,
+                                                     reuse=False, 
+                                                     subscope="/meta_tasks")
+            self.meta_m_lang_task_params = _hyper_network(self.language_function_emb, 
+                                                     subscope="/meta_tasks")
+            self.meta_bf_lang_task_params = _hyper_network(self.language_function_emb, 
+                                                      subscope="/meta_tasks")
             self.fed_emb_task_params = _hyper_network(self.feed_embedding_ph, 
                                                       subscope="/base_tasks")
 
@@ -650,6 +685,9 @@ class meta_model(object):
             self.meta_t_task_params = _hyper_network(self.guess_meta_t_function_emb)
             self.meta_m_task_params = _hyper_network(self.guess_meta_m_function_emb)
             self.meta_bf_task_params = _hyper_network(self.guess_meta_bf_function_emb)
+            self.meta_t_lang_task_params = _hyper_network(self.language_function_emb)
+            self.meta_m_lang_task_params = _hyper_network(self.language_function_emb)
+            self.meta_bf_lang_task_params = _hyper_network(self.language_function_emb)
             self.fed_emb_task_params = _hyper_network(self.feed_embedding_ph)
 
         # task network
@@ -686,6 +724,16 @@ class meta_model(object):
         self.meta_bf_output = _task_network(self.meta_bf_task_params,
                                             self.combined_meta_inputs)
 
+        self.meta_t_lang_raw_output = _task_network(self.meta_t_lang_task_params,
+                                               self.meta_input_ph)
+        self.meta_t_lang_output = tf.nn.sigmoid(self.meta_t_raw_output)
+
+        self.meta_m_lang_output = _task_network(self.meta_m_lang_task_params,
+                                           self.meta_input_ph)
+
+        self.meta_bf_lang_output = _task_network(self.meta_bf_lang_task_params,
+                                            self.combined_meta_inputs)
+
         self.base_loss = tf.square(self.base_output - self.base_target_ph)
         self.total_base_loss = tf.reduce_mean(self.base_loss)
 
@@ -708,6 +756,18 @@ class meta_model(object):
             tf.square(self.meta_bf_output - self.meta_target_ph), axis=1)
         self.total_meta_bf_loss = tf.reduce_mean(self.meta_bf_loss)
 
+        self.meta_t_lang_loss = tf.reduce_sum(
+            tf.square(self.meta_t_lang_output - processed_class), axis=1)
+        self.total_meta_t_lang_loss = tf.reduce_mean(self.meta_t_lang_loss)
+
+        self.meta_m_lang_loss = tf.reduce_sum(
+            tf.square(self.meta_m_lang_output - self.meta_target_ph), axis=1)
+        self.total_meta_m_lang_loss = tf.reduce_mean(self.meta_m_lang_loss)
+
+        self.meta_bf_lang_loss = tf.reduce_sum(
+            tf.square(self.meta_bf_lang_output - self.meta_target_ph), axis=1)
+        self.total_meta_bf_lang_loss = tf.reduce_mean(self.meta_bf_lang_loss)
+
         if config["optimizer"] == "Adam":
             optimizer = tf.train.AdamOptimizer(self.lr_ph)
         elif config["optimizer"] == "RMSProp":
@@ -720,6 +780,9 @@ class meta_model(object):
         self.meta_t_train = optimizer.minimize(self.total_meta_t_loss)
         self.meta_m_train = optimizer.minimize(self.total_meta_m_loss)
         self.meta_bf_train = optimizer.minimize(self.total_meta_bf_loss)
+        self.meta_t_lang_train = optimizer.minimize(self.total_meta_t_lang_loss)
+        self.meta_m_lang_train = optimizer.minimize(self.total_meta_m_lang_loss)
+        self.meta_bf_lang_train = optimizer.minimize(self.total_meta_bf_lang_loss)
 
         # Saver
         self.saver = tf.train.Saver()
@@ -991,6 +1054,50 @@ class meta_model(object):
         return names, losses
 
 
+    def lang_meta_loss_eval(self, intified_meta_task, meta_dataset):
+        feed_dict = {
+            self.keep_prob_ph: 1.,
+            self.lang_keep_ph: 1.,
+            self.language_input_ph: intified_meta_task
+        }
+        y_data = meta_dataset["y"]
+        if y_data.shape[-1] == 1:
+            feed_dict[self.meta_class_ph] = y_data 
+            fetch = self.total_meta_t_lang_loss
+        else:
+            feed_dict[self.meta_target_ph] = y_data 
+            fetch = self.total_meta_m_lang_loss
+
+        if "x1" in meta_dataset: 
+            feed_dict[self.meta_input_ph] = meta_dataset["x1"]
+            feed_dict[self.meta_input_2_ph] = meta_dataset["x2"]
+            feed_dict[self.guess_input_mask_ph] =  np.ones([len(meta_dataset["x1"])])
+            fetch = self.total_meta_bf_lang_loss
+        else:
+            feed_dict[self.meta_input_ph] = meta_dataset["x"]
+            feed_dict[self.guess_input_mask_ph] =  np.ones([len(meta_dataset["x"])])
+
+        return self.sess.run(fetch, feed_dict=feed_dict)
+        
+
+    def run_lang_meta_loss_eval(self, include_new=False):
+        meta_tasks = self.all_base_meta_tasks 
+        if include_new:
+            meta_tasks = self.all_meta_tasks 
+
+        names = []
+        losses = []
+        for t in meta_tasks:
+            meta_dataset = self.meta_dataset_cache[t]
+            intified_meta_task = self.meta_task_to_ints[t]
+            if meta_dataset == {}: # new tasks aren't cached
+                meta_dataset = self.get_meta_dataset(t, include_new) 
+            loss = self.lang_meta_loss_eval(intified_meta_task, meta_dataset)
+            names.append(t)
+            losses.append(loss)
+
+        return names, losses
+
     def get_meta_embedding(self, meta_dataset):
         feed_dict = {
             self.keep_prob_ph: 1.,
@@ -1124,6 +1231,120 @@ class meta_model(object):
         return names, losses 
 
 
+    def get_lang_meta_outputs(self, intified_meta_task, meta_dataset, new_dataset=None):
+        """Get new dataset mapped according to language input, or just outputs
+        for original dataset if new_dataset is None"""
+        meta_class = meta_dataset["y"].shape[-1] == 1
+
+        if new_dataset is not None:
+            if "x" in meta_dataset:
+                this_x = np.concatenate([meta_dataset["x"], new_dataset["x"]], axis=0)
+                new_x = new_dataset["x"] 
+                this_mask = np.zeros(len(this_x), dtype=np.bool)
+                this_mask[:len(meta_dataset["x"])] = True # use only these to guess
+            else:
+                this_x1 = np.concatenate([meta_dataset["x1"], new_dataset["x1"]], axis=0)
+                this_x2 = np.concatenate([meta_dataset["x2"], new_dataset["x2"]], axis=0)
+                new_x = new_dataset["x1"] # for size only 
+                this_mask = np.zeros(len(this_x1), dtype=np.bool)
+                this_mask[:len(meta_dataset["x1"])] = True # use only these to guess
+
+            if meta_class:
+                this_y = np.concatenate([meta_dataset["y"], np.zeros([len(new_x)])], axis=0)
+            else:
+                this_y = np.concatenate([meta_dataset["y"], np.zeros_like(new_x)], axis=0)
+
+        else:
+            if "x" in meta_dataset:
+                this_x = meta_dataset["x"]
+                this_mask = np.ones(len(this_x), dtype=np.bool)
+            else:
+                this_x1 = meta_dataset["x1"]
+                this_x2 = meta_dataset["x2"]
+                this_mask = np.ones(len(this_x1), dtype=np.bool)
+            this_y = meta_dataset["y"]
+
+        feed_dict = {
+            self.keep_prob_ph: 1.,
+            self.lang_keep_ph: 1.,
+            self.language_input_ph: intified_meta_task
+        }
+        if meta_class:
+            feed_dict[self.meta_class_ph] = this_y 
+            this_fetch = self.meta_t_lang_output 
+        else:
+            feed_dict[self.meta_target_ph] = this_y
+            this_fetch = self.meta_m_lang_output 
+
+        if "x1" in meta_dataset: 
+            feed_dict[self.meta_input_ph] = this_x1 
+            feed_dict[self.meta_input_2_ph] = this_x2 
+            fetch = self.meta_bf_lang_output
+        else:
+            feed_dict[self.meta_input_ph] = this_x 
+
+        res = self.sess.run(this_fetch, feed_dict=feed_dict)
+
+        if new_dataset is not None:
+            return res[len(meta_dataset["y"]):, :]
+        else:
+            return res
+
+
+    def run_lang_meta_true_eval(self, include_new=False):
+        """Evaluates true meta loss, i.e. the accuracy of the model produced
+           by the embedding output by the meta task (from language)"""
+        if include_new:
+            meta_tasks = self.base_meta_mappings + self.new_meta_mappings
+            meta_pairings = self.meta_pairings_full
+        else:
+            meta_tasks = self.base_meta_mappings
+            meta_pairings = self.meta_pairings_base
+        meta_binary_funcs = self.base_meta_binary_funcs
+
+        names = []
+        losses = []
+        for meta_task in meta_tasks:
+            meta_dataset = self.meta_dataset_cache[meta_task]
+            intified_meta_task = self.meta_task_to_ints[meta_task]
+            if meta_dataset == {}: # new tasks aren't cached
+                meta_dataset = self.get_meta_dataset(meta_task, include_new) 
+
+            for task, other in meta_pairings[meta_task]:
+                task_buffer = self.memory_buffers[task]
+                task_embedding = self.get_base_embedding(task_buffer)
+
+                other_buffer = self.memory_buffers[other]
+
+                mapped_embedding = self.get_lang_meta_outputs(
+                    intified_meta_task, meta_dataset, {"x": task_embedding})
+
+                names.append(meta_task + ":" + task + "->" + other)
+                this_loss = self.base_embedding_eval(mapped_embedding, other_buffer)[0]
+                losses.append(this_loss)
+        for meta_task in meta_binary_funcs:
+            meta_dataset = self.meta_dataset_cache[meta_task]
+            intified_meta_task = self.meta_task_to_ints[meta_task]
+            for task1, task2, other in meta_pairings[meta_task]:
+                task1_buffer = self.memory_buffers[task1]
+                task1_embedding = self.get_base_embedding(task1_buffer)
+                task2_buffer = self.memory_buffers[task2]
+                task2_embedding = self.get_base_embedding(task2_buffer)
+
+                other_buffer = self.memory_buffers[other]
+
+                mapped_embedding = self.get_lang_meta_outputs(
+                    intified_meta_task,
+                    meta_dataset, {"x1": task1_embedding,
+                                   "x2": task2_embedding})
+
+                names.append(meta_task + ":" + task1 + ":" + task2 + "->" + other)
+                this_loss = self.base_embedding_eval(mapped_embedding, other_buffer)[0]
+                losses.append(this_loss)
+
+        return names, losses 
+
+
     def meta_train_step(self, meta_dataset, meta_lr):
         if "y" not in meta_dataset:
             print(meta_dataset)
@@ -1156,6 +1377,40 @@ class meta_model(object):
         self.sess.run(op, feed_dict=feed_dict)
 
 
+    def lang_meta_train_step(self, intified_meta_task, meta_dataset, meta_lr):
+        if "y" not in meta_dataset:
+            print(meta_dataset)
+        y_data = meta_dataset["y"]
+        if "x" in meta_dataset:
+            feed_dict = {
+                self.keep_prob_ph: self.tkp,
+                self.meta_input_ph: meta_dataset["x"],
+                self.lr_ph: meta_lr,
+                self.lang_keep_ph: self.lang_keep_prob,
+                self.language_input_ph: intified_meta_task
+            }
+            meta_class = y_data.shape[-1] == 1
+            if meta_class:
+                feed_dict[self.meta_class_ph] = y_data
+                op = self.meta_t_lang_train
+            else:
+                feed_dict[self.meta_target_ph] = y_data
+                op = self.meta_m_lang_train
+        else:
+            feed_dict = {
+                self.keep_prob_ph: self.tkp,
+                self.meta_input_ph: meta_dataset["x1"],
+                self.meta_input_2_ph: meta_dataset["x2"],
+                self.lr_ph: meta_lr,
+                self.lang_keep_ph: self.lang_keep_prob,
+                self.language_input_ph: intified_meta_task
+            }
+            feed_dict[self.meta_target_ph] = y_data
+            op = self.meta_bf_lang_train
+
+        self.sess.run(op, feed_dict=feed_dict)
+
+
     def save_parameters(self, filename):
         self.saver.save(self.sess, filename)
 
@@ -1167,17 +1422,22 @@ class meta_model(object):
         loss_filename = filename_prefix + "_losses.csv"
         sweep_filename = filename_prefix + "_sweep_losses.csv"
         meta_filename = filename_prefix + "_meta_true_losses.csv"
-        lang_filename = filename_prefix + "_language_losses.csv"
+        lang_filename = filename_prefix + "lang_meta_losses.csv"
+        lang_meta_filename = filename_prefix + "lang_meta_true_losses.csv"
         train_language = config["train_language"]
         train_base = config["train_base"]
         train_meta = config["train_meta"]
 
-        with open(loss_filename, "w") as fout, open(meta_filename, "w") as fout_meta, open(lang_filename, "w") as fout_lang:
+        with open(loss_filename, "w") as fout, open(meta_filename, "w") as fout_meta, open(lang_filename, "w") as fout_lang, open(lang_meta_filename, "w") as fout_lang_meta:
             base_names, base_losses = self.run_base_eval(
                 include_new=include_new)
             meta_names, meta_losses = self.run_meta_loss_eval(
                 include_new=include_new)
             meta_true_names, meta_true_losses = self.run_meta_true_eval(
+                include_new=include_new)
+            lang_meta_names, lang_meta_losses = self.run_lang_meta_loss_eval(
+                include_new=include_new)
+            lang_meta_true_names, lang_meta_true_losses = self.run_lang_meta_true_eval(
                 include_new=include_new)
 
             fout.write("epoch, " + ", ".join(base_names + meta_names) + "\n")
@@ -1188,11 +1448,10 @@ class meta_model(object):
             meta_true_format = ", ".join(["%f" for _ in meta_true_names]) + "\n"
 
             if train_language:
-                (base_lang_names, 
-                 base_lang_losses) = self.run_base_language_eval(
-                    include_new=include_new)
-                lang_loss_format = ", ".join(["%f" for _ in base_lang_names]) + "\n"
-                fout_lang.write("epoch, " + ", ".join(base_lang_names) + "\n")
+                lang_meta_true_format = ", ".join(["%f" for _ in lang_meta_true_names]) + "\n"
+                lang_meta_format = ", ".join(["%f" for _ in lang_meta_names]) + "\n"
+                fout_lang.write("epoch, " + ", ".join(lang_meta_names) + "\n")
+                fout_lang_meta.write("epoch, " + ", ".join(lang_meta_true_names) + "\n")
 
             s_epoch  = "0, "
             curr_losses = s_epoch + (loss_format % tuple(
@@ -1203,9 +1462,12 @@ class meta_model(object):
             fout_meta.write(curr_meta_true)
 
             if train_language:
-                curr_lang_losses = s_epoch + (lang_loss_format % tuple(
-                    base_lang_losses))
-                fout_lang.write(curr_lang_losses)
+                curr_lang_losses = s_epoch + (lang_meta_format % tuple(
+                    lang_meta_losses))
+                fout_lang.write(curr_lang_meta)
+                curr_lang_meta_true = s_epoch + (lang_meta_true_format % tuple(
+                    lang_meta_true_losses))
+                fout_lang_meta.write(curr_lang_meta_true)
 
             if config["sweep_meta_batch_sizes"] is not None:
                 with open(sweep_filename, "w") as fout_sweep:
@@ -1255,17 +1517,14 @@ class meta_model(object):
                         if train_meta:
                             dataset = self.meta_dataset_cache[task]
                             self.meta_train_step(dataset, meta_learning_rate)
+                            if train_language:
+                                intified_task = self.meta_task_to_ints[task] 
+                                self.lang_meta_train_step(intified_task, dataset, meta_learning_rate)
                     else:
                         str_task = _stringify_polynomial(task)
                         memory_buffer = self.memory_buffers[str_task]
                         if train_base:
                             self.base_train_step(memory_buffer, learning_rate)
-                        if train_language:
-                            intified_task = self.task_to_ints[str_task]
-                            if intified_task is not None:
-                                self.base_language_train_step(
-                                    intified_task, memory_buffer,
-                                    language_learning_rate)
 
 
                 if epoch % save_every == 0:
@@ -1281,21 +1540,21 @@ class meta_model(object):
                     curr_meta_true = s_epoch + (meta_true_format % tuple(meta_true_losses))
                     fout.write(curr_losses)
                     fout_meta.write(curr_meta_true)
+
                     if train_language:
-                        (_, base_lang_losses) = self.run_base_language_eval(
-                            include_new=include_new)
-                        curr_lang_losses = s_epoch + (lang_loss_format % tuple(
-                            base_lang_losses))
-                        fout_lang.write(curr_lang_losses)
-                        print(curr_losses, curr_lang_losses)
-                        if np.all(curr_losses < early_stopping_thresh) and np.all(curr_lang_losses < early_stopping_thresh):
-                            print("Early stop!")
-                            break
+                        _, lang_meta_losses = self.run_lang_meta_loss_eval(
+                             include_new=include_new)
+                        _, lang_meta_true_losses = self.run_lang_meta_true_eval(
+                             include_new=include_new)
+                        curr_lang_losses = s_epoch + (lang_meta_format % tuple(
+                            lang_meta_losses))
+                        fout_lang.write(curr_lang_meta)
+                        curr_lang_meta_true = s_epoch + (lang_meta_true_format % tuple(
+                            lang_meta_true_losses))
+                        fout_lang_meta.write(curr_lang_meta_true)
+                        print(curr_losses, curr_lang_losses) 
                     else:
                         print(curr_losses)
-                        if np.all(curr_losses < early_stopping_thresh):
-                            print("Early stop!")
-                            break
 
 
                 if epoch % lr_decays_every == 0 and epoch > 0:

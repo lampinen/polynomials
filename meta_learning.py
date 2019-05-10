@@ -1385,6 +1385,7 @@ class meta_model(object):
             feed_dict = {
                 self.keep_prob_ph: self.tkp,
                 self.meta_input_ph: meta_dataset["x"],
+                self.guess_input_mask_ph: np.ones([len(meta_dataset["x"])]),
                 self.lr_ph: meta_lr,
                 self.lang_keep_ph: self.lang_keep_prob,
                 self.language_input_ph: intified_meta_task

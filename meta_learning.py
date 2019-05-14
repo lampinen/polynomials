@@ -18,7 +18,7 @@ from orthogonal_matrices import random_orthogonal
 ### Parameters #################################################
 
 config = {
-    "run_offset": 2,
+    "run_offset": 0,
     "num_runs": 1,
 
     "num_variables": 4,
@@ -68,7 +68,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs4/lampinen/polynomials/newest_results/language_meta_only/",
+    "output_dir": "/mnt/fs4/lampinen/polynomials/newest_results/language_conditioned_meta_only/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [5, 10, 20, 30, 40, 80], # if not None,
                                                    # eval each at
@@ -96,6 +96,7 @@ config = {
     "train_meta": True,
     "separate_meta_task_network": False, # baseline architecture where meta-task
                                         # weights aren't shared with basic
+                                        # NOT FULLY IMPLEMENTED IN THIS BRANCH
     "lang_drop_prob": 0.0, # dropout on language processing features
                             # to try to address overfitting
 
@@ -601,137 +602,55 @@ class meta_model(object):
         self.language_function_emb = _language_network(self.embedded_language,
                                                        False)
 
-
-        # hyper_network: emb -> (f: emb -> emb)
         self.feed_embedding_ph = tf.placeholder(np.float32,
                                                 [1, num_hidden_hyper])
-
-        num_task_hidden_layers = config["num_task_hidden_layers"]
-
-        tw_range = config["task_weight_weight_mult"]/np.sqrt(
-            num_hidden * num_hidden_hyper) # yields a very very roughly O(1) map
-        task_weight_gen_init = tf.random_uniform_initializer(-tw_range,
-                                                             tw_range)
-
-        def _hyper_network(function_embedding, reuse=True, subscope=''):
-            with tf.variable_scope('hyper' + subscope, reuse=reuse):
-                hyper_hidden = function_embedding
-                for _ in range(config["num_hyper_hidden_layers"]):
-                    hyper_hidden = slim.fully_connected(hyper_hidden, num_hidden_hyper,
-                                                        activation_fn=internal_nonlinearity)
-                    hyper_hidden = tf.nn.dropout(hyper_hidden, self.keep_prob_ph)
-
-                hidden_weights = []
-                hidden_biases = []
-
-                task_weights = slim.fully_connected(hyper_hidden, num_hidden*(num_hidden_hyper +(num_task_hidden_layers-1)*num_hidden + num_hidden_hyper),
-                                                    activation_fn=None,
-                                                    weights_initializer=task_weight_gen_init)
-                task_weights = tf.nn.dropout(task_weights, self.keep_prob_ph)
-
-                task_weights = tf.reshape(task_weights, [-1, num_hidden, (num_hidden_hyper + (num_task_hidden_layers-1)*num_hidden + num_hidden_hyper)])
-                task_biases = slim.fully_connected(hyper_hidden, num_task_hidden_layers * num_hidden + num_hidden_hyper,
-                                                   activation_fn=None)
-
-                Wi = tf.transpose(task_weights[:, :, :num_hidden_hyper], perm=[0, 2, 1])
-                bi = task_biases[:, :num_hidden]
-                hidden_weights.append(Wi)
-                hidden_biases.append(bi)
-                for i in range(1, num_task_hidden_layers):
-                    Wi = tf.transpose(task_weights[:, :, num_hidden_hyper+(i-1)*num_hidden:num_hidden_hyper+i*num_hidden], perm=[0, 2, 1])
-                    bi = task_biases[:, num_hidden*i:num_hidden*(i+1)]
-                    hidden_weights.append(Wi)
-                    hidden_biases.append(bi)
-                Wfinal = task_weights[:, :, -num_hidden_hyper:]
-                bfinal = task_biases[:, -num_hidden_hyper:]
-
-                for i in range(num_task_hidden_layers):
-                    hidden_weights[i] = tf.squeeze(hidden_weights[i], axis=0)
-                    hidden_biases[i] = tf.squeeze(hidden_biases[i], axis=0)
-
-                Wfinal = tf.squeeze(Wfinal, axis=0)
-                bfinal = tf.squeeze(bfinal, axis=0)
-                hidden_weights.append(Wfinal)
-                hidden_biases.append(bfinal)
-                return hidden_weights, hidden_biases
-
-        if config["separate_meta_task_network"]:
-            self.base_task_params = _hyper_network(self.guess_base_function_emb,
-                                                   reuse=False, 
-                                                   subscope="/base_tasks")
-            self.base_lang_task_params = _hyper_network(self.language_function_emb, 
-                                                        subscope="/base_tasks")
-            self.meta_t_task_params = _hyper_network(self.guess_meta_t_function_emb,
-                                                     reuse=False, 
-                                                     subscope="/meta_tasks")
-            self.meta_m_task_params = _hyper_network(self.guess_meta_m_function_emb, 
-                                                     subscope="/meta_tasks")
-            self.meta_bf_task_params = _hyper_network(self.guess_meta_bf_function_emb, 
-                                                      subscope="/meta_tasks")
-            self.meta_t_lang_task_params = _hyper_network(self.language_function_emb,
-                                                     reuse=False, 
-                                                     subscope="/meta_tasks")
-            self.meta_m_lang_task_params = _hyper_network(self.language_function_emb, 
-                                                     subscope="/meta_tasks")
-            self.meta_bf_lang_task_params = _hyper_network(self.language_function_emb, 
-                                                      subscope="/meta_tasks")
-            self.fed_emb_task_params = _hyper_network(self.feed_embedding_ph, 
-                                                      subscope="/base_tasks")
-
-        else:
-            self.base_task_params = _hyper_network(self.guess_base_function_emb,
-                                                   reuse=False)
-            self.base_lang_task_params = _hyper_network(self.language_function_emb)
-            self.meta_t_task_params = _hyper_network(self.guess_meta_t_function_emb)
-            self.meta_m_task_params = _hyper_network(self.guess_meta_m_function_emb)
-            self.meta_bf_task_params = _hyper_network(self.guess_meta_bf_function_emb)
-            self.meta_t_lang_task_params = _hyper_network(self.language_function_emb)
-            self.meta_m_lang_task_params = _hyper_network(self.language_function_emb)
-            self.meta_bf_lang_task_params = _hyper_network(self.language_function_emb)
-            self.fed_emb_task_params = _hyper_network(self.feed_embedding_ph)
-
+        # conditioned_language
         # task network
-        def _task_network(task_params, processed_input):
-            hweights, hbiases = task_params
-            task_hidden = processed_input
-            for i in range(num_task_hidden_layers):
-                task_hidden = internal_nonlinearity(
-                    tf.matmul(task_hidden, hweights[i]) + hbiases[i])
+        num_task_hidden_layers = config["num_task_hidden_layers"]
+        def _task_network(task_embedding, processed_input):
+            task_embedding = tf.tile(task_embedding, [tf.shape(processed_input)[0], 1])
+            task_hidden = tf.concat([task_embedding,
+                                      processed_input], axis=-1)
 
-            raw_output = tf.matmul(task_hidden, hweights[-1]) + hbiases[-1]
+            for i in range(num_task_hidden_layers):
+                task_hidden = slim.fully_connected(task_hidden, num_hidden_hyper,
+                                                   activation_fn=internal_nonlinearity)
+
+            raw_output = slim.fully_connected(task_hidden, num_hidden_hyper,
+                                              activation_fn=None)
 
             return raw_output
 
-        self.base_raw_output = _task_network(self.base_task_params,
+        self.base_raw_output = _task_network(self.guess_base_function_emb,
                                              processed_input)
         self.base_output = _output_mapping(self.base_raw_output)
 
-        self.base_lang_raw_output = _task_network(self.base_lang_task_params,
+        self.base_lang_raw_output = _task_network(self.language_function_emb,
                                              processed_input)
         self.base_lang_output = _output_mapping(self.base_lang_raw_output)
 
-        self.base_raw_output_fed_emb = _task_network(self.fed_emb_task_params,
+        self.base_raw_output_fed_emb = _task_network(self.feed_embedding_ph,
                                                      processed_input)
         self.base_output_fed_emb = _output_mapping(self.base_raw_output_fed_emb)
 
-        self.meta_t_raw_output = _task_network(self.meta_t_task_params,
+        self.meta_t_raw_output = _task_network(self.guess_meta_t_function_emb,
                                                self.meta_input_ph)
         self.meta_t_output = tf.nn.sigmoid(self.meta_t_raw_output)
 
-        self.meta_m_output = _task_network(self.meta_m_task_params,
+        self.meta_m_output = _task_network(self.guess_meta_m_function_emb,
                                            self.meta_input_ph)
 
-        self.meta_bf_output = _task_network(self.meta_bf_task_params,
+        self.meta_bf_output = _task_network(self.guess_meta_bf_function_emb,
                                             self.combined_meta_inputs)
 
-        self.meta_t_lang_raw_output = _task_network(self.meta_t_lang_task_params,
+        self.meta_t_lang_raw_output = _task_network(self.language_function_emb,
                                                self.meta_input_ph)
         self.meta_t_lang_output = tf.nn.sigmoid(self.meta_t_raw_output)
 
-        self.meta_m_lang_output = _task_network(self.meta_m_lang_task_params,
+        self.meta_m_lang_output = _task_network(self.language_function_emb,
                                            self.meta_input_ph)
 
-        self.meta_bf_lang_output = _task_network(self.meta_bf_lang_task_params,
+        self.meta_bf_lang_output = _task_network(self.language_function_emb,
                                             self.combined_meta_inputs)
 
         self.base_loss = tf.square(self.base_output - self.base_target_ph)

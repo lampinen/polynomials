@@ -18,8 +18,8 @@ from orthogonal_matrices import random_orthogonal
 ### Parameters #################################################
 
 config = {
-    "run_offset": 0,
-    "num_runs": 5,
+    "run_offset": 2,
+    "num_runs": 1,
 
     "num_variables": 4,
     "max_degree": 2,
@@ -68,7 +68,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/newest_results/language_meta_only/",
+    "output_dir": "/mnt/fs4/lampinen/polynomials/newest_results/language_meta_only/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [5, 10, 20, 30, 40, 80], # if not None,
                                                    # eval each at
